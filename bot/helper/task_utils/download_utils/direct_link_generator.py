@@ -1,4 +1,9 @@
 from cloudscraper import create_scraper
+from bs4 import BeautifulSoup
+from urllib.parse import urlparse
+import time
+import requests
+from re import match as re_match
 from hashlib import sha256
 from http.cookiejar import MozillaCookieJar
 from json import loads
@@ -343,6 +348,63 @@ def osdn(url):
             raise DirectDownloadLinkException("ERROR: Direct link not found")
         return f"https://osdn.net{direct_link[0]}"
 
+
+def devupload(url):
+    """
+    DevUpload direct link generator
+    Based on https://devupload.com/
+    """
+    try:
+        session = requests.Session()
+        parsed_url = urlparse(url)
+        
+        if not re_match(r'https?://(www\.)?devupload\.com/\w+', url):
+            raise DirectDownloadLinkException("ERROR: Invalid DevUpload URL format")
+            
+        response = session.get(url)
+        soup = BeautifulSoup(response.content, 'html.parser')
+        
+        # Find the download button/form
+        form = soup.find('form', {'name': 'F1'})
+        if not form:
+            raise DirectDownloadLinkException("ERROR: File not found or download page layout has changed")
+            
+        # Get the necessary form inputs
+        inputs = {}
+        for inp in form.find_all('input'):
+            if inp.get('name'):
+                inputs[inp.get('name')] = inp.get('value')
+                
+        # Wait for the countdown (typically 5-10 seconds)
+        if 'down_direct' not in inputs:
+            wait_time = 10
+            LOGGER.info(f"DevUpload: Waiting for {wait_time} seconds...")
+            time.sleep(wait_time)
+            
+            # Submit the form to get the direct link
+            response = session.post(url, data=inputs)
+            soup = BeautifulSoup(response.content, 'html.parser')
+            
+            # Look for direct download link
+            direct_link = soup.find('a', {'id': 'uniqueExpirylink'})
+            if direct_link:
+                return direct_link['href']
+            else:
+                # Alternative method if the first one fails
+                direct_link = soup.find('a', {'class': 'btn btn-primary'})
+                if direct_link and 'download' in direct_link.text.lower():
+                    return direct_link['href']
+                
+                # Last resort - try to find any download link
+                links = soup.find_all('a', href=True)
+                for link in links:
+                    if 'download' in link.text.lower() and link['href'].startswith('http'):
+                        return link['href']
+                    
+        raise DirectDownloadLinkException("ERROR: Failed to get DevUpload direct link")
+        
+    except Exception as e:
+        raise DirectDownloadLinkException(f"ERROR: {e}")
 
 def yandex_disk(url: str) -> str:
     """Yandex.Disk direct link generator
