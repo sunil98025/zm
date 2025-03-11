@@ -4,6 +4,7 @@ anytree
 apscheduler
 aria2p
 asyncio
+beautifulsoup4>=4.10.0
 bencoding
 cloudscraper
 cryptography
