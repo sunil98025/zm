@@ -1,6 +1,10 @@
 from aiofiles.os import path as aiopath
 from base64 import b64encode
 from re import match as re_match
+from bs4 import BeautifulSoup
+from urllib.parse import urlparse
+import time
+import requests
 
 from nekozee.filters import command
 from nekozee.handlers import MessageHandler
@@ -48,6 +52,81 @@ from ..helper.telegram_helper.message_utils import (
     send_message,
     edit_message,
 )
+
+
+def devupload(url):
+    """
+    DevUpload direct link generator
+    Based on https://devupload.com/
+    """
+    try:
+        session = requests.Session()
+        parsed_url = urlparse(url)
+        
+        if not re_match(r'https?://(www\.)?devupload\.com/\w+', url):
+            raise DirectDownloadLinkException("ERROR: Invalid DevUpload URL format")
+            
+        response = session.get(url)
+        soup = BeautifulSoup(response.content, 'html.parser')
+        
+        # Find the download button/form
+        form = soup.find('form', {'name': 'F1'})
+        if not form:
+            raise DirectDownloadLinkException("ERROR: File not found or download page layout has changed")
+            
+        # Get the necessary form inputs
+        inputs = {}
+        for inp in form.find_all('input'):
+            if inp.get('name'):
+                inputs[inp.get('name')] = inp.get('value')
+                
+        # Wait for the countdown (typically 5-10 seconds)
+        if 'down_direct' not in inputs:
+            wait_time = 10
+            LOGGER.info(f"DevUpload: Waiting for {wait_time} seconds...")
+            time.sleep(wait_time)
+            
+            # Submit the form to get the direct link
+            response = session.post(url, data=inputs)
+            soup = BeautifulSoup(response.content, 'html.parser')
+            
+            # Look for direct download link
+            direct_link = soup.find('a', {'id': 'uniqueExpirylink'})
+            if direct_link:
+                return direct_link['href']
+            else:
+                # Alternative method if the first one fails
+                direct_link = soup.find('a', {'class': 'btn btn-primary'})
+                if direct_link and 'download' in direct_link.text.lower():
+                    return direct_link['href']
+                
+                # Last resort - try to find any download link
+                links = soup.find_all('a', href=True)
+                for link in links:
+                    if 'download' in link.text.lower() and link['href'].startswith('http'):
+                        return link['href']
+                    
+        raise DirectDownloadLinkException("ERROR: Failed to get DevUpload direct link")
+        
+    except Exception as e:
+        raise DirectDownloadLinkException(f"ERROR: {e}")
+
+
+# Patch the direct_link_generator function to support DevUpload
+original_direct_link_generator = direct_link_generator
+
+def patched_direct_link_generator(link):
+    domain = urlparse(link).netloc
+    
+    # Add DevUpload support
+    if any(x in domain for x in ['devupload.com']):
+        return devupload(link)
+    
+    # Call the original function for all other cases
+    return original_direct_link_generator(link)
+
+# Replace the original function with our patched version
+direct_link_generator = patched_direct_link_generator
 
 
 class Mirror(TaskListener):
@@ -517,149 +596,4 @@ class Mirror(TaskListener):
                     f" authorization: Basic {b64encode(auth.encode()).decode("ascii")}"
                 )
             await add_aria2c_download(
-                self,
-                path,
-                headers,
-                ratio,
-                seed_time
-            )
-
-
-async def mirror(client, message):
-    bot_loop.create_task(Mirror(
-        client,
-        message
-    ).new_event()) # type: ignore
-
-
-async def qb_mirror(client, message):
-    bot_loop.create_task(Mirror(
-        client,
-        message,
-        is_qbit=True
-    ).new_event()) # type: ignore
-
-
-async def jd_mirror(client, message):
-    bot_loop.create_task(Mirror(
-        client,
-        message,
-        is_jd=True
-    ).new_event()) # type: ignore
-
-
-async def nzb_mirror(client, message):
-    bot_loop.create_task(Mirror(
-        client,
-        message,
-        is_nzb=True
-    ).new_event()) # type: ignore
-
-
-async def leech(client, message):
-    bot_loop.create_task(Mirror(
-        client,
-        message,
-        is_leech=True
-    ).new_event()) # type: ignore
-
-
-async def qb_leech(client, message):
-    bot_loop.create_task(Mirror(
-        client,
-        message,
-        is_qbit=True,
-        is_leech=True
-    ).new_event()) # type: ignore
-
-
-async def jd_leech(client, message):
-    bot_loop.create_task(Mirror(
-        client,
-        message,
-        is_leech=True,
-        is_jd=True
-    ).new_event()) # type: ignore
-
-
-async def nzb_leech(client, message):
-    bot_loop.create_task(Mirror(
-        client,
-        message,
-        is_leech=True,
-        is_nzb=True
-    ).new_event()) # type: ignore
-
-
-bot.add_handler( # type: ignore
-    MessageHandler(
-        mirror,
-        filters=command(
-            BotCommands.MirrorCommand,
-            case_sensitive=True
-        ) & CustomFilters.authorized
-    )
-)
-bot.add_handler( # type: ignore
-    MessageHandler(
-        qb_mirror,
-        filters=command(
-            BotCommands.QbMirrorCommand,
-            case_sensitive=True
-        ) & CustomFilters.authorized,
-    )
-)
-bot.add_handler( # type: ignore
-    MessageHandler(
-        jd_mirror,
-        filters=command(
-            BotCommands.JdMirrorCommand,
-            case_sensitive=True
-        ) & CustomFilters.authorized,
-    )
-)
-bot.add_handler( # type: ignore
-    MessageHandler(
-        nzb_mirror,
-        filters=command(
-            BotCommands.NzbMirrorCommand,
-            case_sensitive=True
-        ) & CustomFilters.authorized,
-    )
-)
-bot.add_handler( # type: ignore
-    MessageHandler(
-        leech,
-        filters=command(
-            BotCommands.LeechCommand,
-            case_sensitive=True
-        ) & CustomFilters.authorized
-    )
-)
-bot.add_handler( # type: ignore
-    MessageHandler(
-        qb_leech,
-        filters=command(
-            BotCommands.QbLeechCommand,
-            case_sensitive=True
-        ) & CustomFilters.authorized
-    )
-)
-bot.add_handler( # type: ignore
-    MessageHandler(
-        jd_leech,
-        filters=command(
-            BotCommands.JdLeechCommand,
-            case_sensitive=True
-        ) & CustomFilters.authorized
-    )
-)
-bot.add_handler( # type: ignore
-    MessageHandler(
-        nzb_leech,
-        filters=command(
-            BotCommands.NzbLeechCommand,
-            case_sensitive=True
-        ) & CustomFilters.authorized,
-    )
-)
+    
